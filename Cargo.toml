@@ -1,21 +1,36 @@
+# Remember to run `cargo update` to ensure that versions are updated.
+# `cargo clean` does not change the Cargo.lock file.
 [package]
 name = "rustbox"
 version = "0.1.0"
 authors = ["jrconlin <jconlin+git@mozilla.com>"]
 
 [dependencies]
-rocket="0.3"
-rocket_codegen="0.3"
-serde="1.0"
-serde_json="1.0"
-serde_derive="1.0"
-mysql="12.2"
-reqwest="0.8"  # for HTTP Client calls.
-
+failure="~0.1"
+mysql="~12.2"
+rand="~0.4"
+reqwest="^0.8.5"
+rocket="~0.3"
+rocket_codegen="~0.3"
+serde="~1.0"
+serde_derive="~1.0"
+serde_json="~1.0"
+slog="~2.2"
+slog-async="~2.2"
+slog-term="~2.3"
+slog-json="~2.2"
+slog-scope="~4.0"
+slog-stdlog="~3.0"
+time="~0.1"
 
 [dependencies.rocket_contrib]
-default-features=false
+version="~0.3"
+default-features=true
 
-[dependencies.mysql]
-version="*"
-#features=["ssl"]
+[dependencies.diesel]
+version="~1.1"
+features=["mysql", "r2d2"]
+
+[dependencies.diesel_migrations]
+version="~1.1"
+features=["mysql"]
