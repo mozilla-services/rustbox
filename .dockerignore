@@ -1,5 +1,5 @@
+.git/
 .idea/
 .vscode/
-*.sw?
-tools/
 notes/
+tools/

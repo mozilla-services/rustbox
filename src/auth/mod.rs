@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest;
-use rocket::Outcome::{Failure, Success};
 use rocket::request::{self, FromRequest};
+use rocket::Outcome::{Failure, Success};
 use rocket::{Request, State};
 
 use error::{HandlerError, HandlerErrorKind, VALIDATION_FAILED};
@@ -90,7 +90,7 @@ impl FxAAuthenticator {
             }
         };
         let resp: FxAResp = if cfg!(test) {
-            /* 
+            /*
             Sadly, there doesn't seem to be a good way to do this. We can't add a trait for mocking
             this because the FromRequest trait doesn't allow additional methods, we can't dummy
             out the reqwest call, the only thing we can modify and access is the config info.
@@ -196,7 +196,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for FxAAuthenticator {
             if auth_bits.len() != 2 {
                 return Failure((
                     VALIDATION_FAILED,
-                    HandlerErrorKind::Unauthorized(
+                    HandlerErrorKind::InvalidAuth(
                         "Incorrect Authorization Header Token".to_string(),
                     ).into(),
                 ));
@@ -211,7 +211,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for FxAAuthenticator {
                     slog_info!(logger.log, "Found Server token");
                     return Failure((
                         VALIDATION_FAILED,
-                        HandlerErrorKind::Unauthorized(
+                        HandlerErrorKind::InvalidAuth(
                             "Incorrect Authorization Header Schema".to_string(),
                         ).into(),
                     ));
@@ -220,10 +220,7 @@ impl<'a, 'r> FromRequest<'a, 'r> for FxAAuthenticator {
         } else {
             // No Authorization header
             slog_info!(logger.log, "No Authorization Header found");
-            return Failure((
-                VALIDATION_FAILED,
-                HandlerErrorKind::Unauthorized("Missing Authorization Header".to_string()).into(),
-            ));
+            return Failure((VALIDATION_FAILED, HandlerErrorKind::MissingAuth.into()));
         }
     }
 }
@@ -291,14 +288,13 @@ mod test {
             .get_str("fxa_host")
             .unwrap_or("oauth.stage.mozaws.net");
 
-        let config = Config::build(Environment::Development)
+        Config::build(Environment::Development)
             .extra("fxa_host", fxa_host)
             .extra("dryrun", false)
             .extra("auth_app_name", "test")
             .extra("test_data", test_data)
             .finalize()
-            .unwrap();
-        config
+            .unwrap()
     }
 
     fn rocket_client(config: Config) -> Client {
