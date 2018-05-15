@@ -2,6 +2,7 @@
 database_url="mysql://test:test@localhost/pushbox"
 fxa_host="oauth.stage.mozaws.net"
 dryrun=true
+server_token="Correct_Horse_Battery_Staple_1"
 
 [staging]
 

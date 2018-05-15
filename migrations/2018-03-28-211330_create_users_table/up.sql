@@ -1,4 +1,4 @@
-CREATE TABLE pushboxv1 (
+CREATE TABLE if not exists pushboxv1 (
     user_id Varchar(200) Not Null,
     device_id Varchar(200),
     data Blob,

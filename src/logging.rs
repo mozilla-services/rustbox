@@ -4,8 +4,6 @@ use rocket::{Outcome, Request, State};
 use slog;
 use slog::Drain;
 use slog_async;
-use slog_scope;
-use slog_stdlog;
 use slog_term;
 
 #[derive(Clone, Debug)]
@@ -14,7 +12,7 @@ pub struct RBLogger {
 }
 
 impl RBLogger {
-    pub fn new(config: &Config) -> RBLogger {
+    pub fn new(_config: &Config) -> RBLogger {
         let decorator = slog_term::TermDecorator::new().build();
         let drain = slog_term::CompactFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();

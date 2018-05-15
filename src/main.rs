@@ -4,6 +4,8 @@
 #[macro_use]
 extern crate diesel;
 #[macro_use]
+extern crate diesel_migrations;
+#[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate serde_derive;
@@ -11,10 +13,7 @@ extern crate serde_derive;
 extern crate serde_json;
 #[macro_use]
 extern crate slog;
-#[macro_use]
-extern crate slog_scope;
 
-extern crate diesel_migrations;
 extern crate mysql;
 extern crate rand;
 extern crate reqwest;

@@ -5,6 +5,7 @@ use std::ops::Deref;
 
 use diesel::mysql::MysqlConnection;
 use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
+use diesel::Connection;
 use failure::err_msg;
 
 use rocket::http::Status;
@@ -14,6 +15,21 @@ use rocket::{Config, Outcome, Request, State};
 use error::Result;
 
 pub type MysqlPool = Pool<ConnectionManager<MysqlConnection>>;
+
+embed_migrations!();
+
+/// Run the diesel embedded migrations
+///
+/// Mysql DDL statements implicitly commit which could disrupt MysqlPool's
+/// begin_test_transaction during tests. So this runs on its own separate conn.
+pub fn run_embedded_migrations(config: &Config) -> Result<()> {
+    let database_url = config
+        .get_str("database_url")
+        .map_err(|_| err_msg("Invalid or undefined ROCKET_DATABASE_URL"))?
+        .to_string();
+    let conn = MysqlConnection::establish(&database_url)?;
+    Ok(embedded_migrations::run(&conn)?)
+}
 
 pub fn pool_from_config(config: &Config) -> Result<MysqlPool> {
     let database_url = config

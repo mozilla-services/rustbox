@@ -7,13 +7,13 @@ use rocket::fairing::AdHoc;
 use rocket::http::Method;
 use rocket::request::{FormItems, FromForm};
 use rocket_contrib::json::Json;
-use slog::Logger;
 
 use auth::{AuthType, FxAAuthenticator};
 use config::ServerConfig;
-use db::models::{calc_ttl, DatabaseManager};
-use db::{pool_from_config, Conn};
+use db::models::DatabaseManager;
+use db::{self, Conn};
 use error::{HandlerError, HandlerErrorKind, HandlerResult};
+use failure::Error;
 use logging::RBLogger;
 
 #[derive(Deserialize, Debug)]
@@ -73,11 +73,12 @@ impl<'f> FromForm<'f> for Options {
 pub struct Server {}
 
 impl Server {
-    pub fn start(rocket: rocket::Rocket) -> HandlerResult<rocket::Rocket> {
+    pub fn start(rocket: rocket::Rocket) -> Result<rocket::Rocket, Error> {
+        db::run_embedded_migrations(rocket.config())?;
         Ok(rocket
             .attach(AdHoc::on_attach(|rocket| {
                 // Copy the config into a state manager.
-                let pool = pool_from_config(rocket.config()).expect("Could not get pool");
+                let pool = db::pool_from_config(rocket.config()).expect("Could not get pool");
                 let rbconfig = ServerConfig::new(rocket.config());
                 let logger = RBLogger::new(rocket.config());
                 slog_info!(logger.log, "sLogging initialized...");
@@ -276,8 +277,13 @@ fn write(
         })));
     }
     slog_debug!(logger.log, "Writing new record");
-    let response =
-        DatabaseManager::new_record(&conn, &user_id, &device_id, &data.data, calc_ttl(data.ttl));
+    let response = DatabaseManager::new_record(
+        &conn,
+        &user_id,
+        &device_id,
+        &data.data,
+        db::models::calc_ttl(data.ttl),
+    );
     if response.is_err() {
         return Err(response.err().unwrap());
     }
@@ -318,6 +324,7 @@ fn delete_user(
 #[get("/status")]
 fn status(config: ServerConfig) -> HandlerResult<Json> {
     let config = config;
+    // TODO: check the database.
 
     Ok(Json(json!({
         "status": "Ok",

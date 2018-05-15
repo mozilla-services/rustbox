@@ -12,7 +12,7 @@ use std::result;
 use failure::{Backtrace, Context, Error, Fail};
 use rocket::http::Status;
 use rocket::response::{Responder, Response};
-use rocket::{self, response, Request};
+use rocket::{response, Request};
 use rocket_contrib::Json;
 
 pub type Result<T> = result::Result<T, Error>;
@@ -33,23 +33,20 @@ pub enum HandlerErrorKind {
     /// 401 Unauthorized
     #[fail(display = "Missing authorization header")]
     MissingAuth,
-    #[fail(display = "Invalid authorization header")]
-    InvalidAuth,
+    #[fail(display = "Invalid authorization header: {:?}", _0)]
+    InvalidAuth(String),
     #[fail(display = "Unauthorized: {:?}", _0)]
     Unauthorized(String),
-    /// 404 Not Found
-    #[fail(display = "Not Found")]
-    NotFound,
-
+    // 404 Not Found
+    //#[fail(display = "Not Found")]
+    //NotFound,
     #[fail(display = "A database error occurred")]
     DBError,
 
     // Note: Make sure that if display has an argument, the label includes the argument,
     // otherwise the process macro parser will fail on `derive(Fail)`
-    #[fail(display = "Unexpected rocket error: {:?}", _0)]
-    RocketError(rocket::Error), // rocket::Error isn't a std Error (so no #[cause])
-    #[fail(display = "Unexpected application error: {:?}", _0)]
-    InternalError(String),
+    //#[fail(display = "Unexpected rocket error: {:?}", _0)]
+    //RocketError(rocket::Error), // rocket::Error isn't a std Error (so no #[cause])
     // Application Errors
 }
 
@@ -57,11 +54,11 @@ impl HandlerErrorKind {
     /// Return a rocket response Status to be rendered for an error
     pub fn http_status(&self) -> Status {
         match *self {
-            HandlerErrorKind::MissingAuth | HandlerErrorKind::InvalidAuth => Status::Unauthorized,
+            HandlerErrorKind::MissingAuth => Status::Unauthorized,
+            HandlerErrorKind::InvalidAuth(ref _msg) => Status::Unauthorized,
             HandlerErrorKind::Unauthorized(ref _msg) => Status::Unauthorized,
-            HandlerErrorKind::NotFound => Status::NotFound,
+            // HandlerErrorKind::NotFound => Status::NotFound,
             HandlerErrorKind::DBError => Status::ServiceUnavailable,
-            _ => Status::BadRequest,
         }
     }
 }
