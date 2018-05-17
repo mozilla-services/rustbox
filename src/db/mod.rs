@@ -38,10 +38,7 @@ pub fn pool_from_config(config: &Config) -> Result<MysqlPool> {
         .to_string();
     let max_size = config.get_int("database_pool_max_size").unwrap_or(10) as u32;
     let manager = ConnectionManager::<MysqlConnection>::new(database_url);
-    let pman = Pool::builder()
-        .max_size(max_size)
-        .build(manager)
-        .expect("Could not build pool");
+    let pman = Pool::builder().max_size(max_size).build(manager)?;
     Ok(pman)
 }
 

@@ -1,8 +1,9 @@
 # Docker 17.05 or higher required for multi-stage builds
-FROM rust:1.25.0-stretch as builder
+FROM rust:1.26.0-stretch as builder
 ADD . /app
 WORKDIR /app
-ARG RUST_TOOLCHAIN=nightly-2018-04-29
+# Make sure that this matches in .travis.yml
+ARG RUST_TOOLCHAIN=nightly
 RUN \
     apt-get -qq update && \
     apt-get -qq install -y default-libmysqlclient-dev && \
@@ -10,7 +11,9 @@ RUN \
     rustup default ${RUST_TOOLCHAIN} && \
     cargo --version && \
     rustc --version && \
-    cargo install --root /app
+    mkdir -m 755 bin && \
+    cargo build --release && \
+    cp /app/target/release/rustbox /app/bin
 
 
 FROM debian:stretch-slim
