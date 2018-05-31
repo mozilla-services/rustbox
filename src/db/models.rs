@@ -1,8 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use diesel::connection::TransactionManager;
 use diesel::mysql::MysqlConnection;
-use diesel::{self, insert_into, Connection, ExpressionMethods, QueryDsl, RunQueryDsl};
+use diesel::{
+    self, insert_into, Connection, ExpressionMethods, OptionalExtension, QueryDsl, RunQueryDsl,
+};
 use failure::ResultExt;
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 
@@ -49,19 +50,17 @@ pub fn calc_ttl(seconds: u64) -> u64 {
 pub struct DatabaseManager {}
 
 impl DatabaseManager {
-    pub fn max_index(conn: &MysqlConnection, user_id: &str, device_id: &str) -> u64 {
-        let mut max_index_sel: Vec<i64> = match pushboxv1::table
+    pub fn max_index(conn: &MysqlConnection, user_id: &str, device_id: &str) -> HandlerResult<u64> {
+        let max_index = pushboxv1::table
             .select(pushboxv1::idx)
             .filter(pushboxv1::user_id.eq(user_id))
             .filter(pushboxv1::device_id.eq(device_id))
             .order(pushboxv1::idx.desc())
-            .limit(1)
-            .load::<i64>(conn)
-        {
-            Ok(val) => val,
-            Err(_) => vec![],
-        };
-        max_index_sel.pop().unwrap_or(0) as u64
+            .first::<i64>(conn)
+            .optional()
+            .context(HandlerErrorKind::DBError)?
+            .unwrap_or(0);
+        Ok(max_index as u64)
     }
 
     pub fn new_record(
@@ -71,32 +70,21 @@ impl DatabaseManager {
         data: &str,
         ttl: u64,
     ) -> HandlerResult<u64> {
-        let t_manager = conn.transaction_manager();
-        t_manager
-            .begin_transaction(conn)
-            .context(HandlerErrorKind::DBError)?;
-        insert_into(pushboxv1::table)
-            .values((
-                pushboxv1::user_id.eq(user_id),
-                pushboxv1::device_id.eq(device_id),
-                pushboxv1::ttl.eq(ttl as i64),
-                pushboxv1::data.eq(data.as_bytes()),
-            ))
-            .execute(conn)
-            .context(HandlerErrorKind::DBError)?;
-        let record_index = match pushboxv1::table
-            .select(pushboxv1::idx)
-            .order(pushboxv1::idx.desc())
-            .limit(1)
-            .load::<i64>(conn)
-        {
-            Ok(val) => val[0],
-            Err(_) => return Err(HandlerErrorKind::DBError.into()),
-        };
-        t_manager
-            .commit_transaction(conn)
-            .context(HandlerErrorKind::DBError)?;
-
+        let record_index =
+            conn.transaction(|| {
+                insert_into(pushboxv1::table)
+                    .values((
+                        pushboxv1::user_id.eq(user_id),
+                        pushboxv1::device_id.eq(device_id),
+                        pushboxv1::ttl.eq(ttl as i64),
+                        pushboxv1::data.eq(data.as_bytes()),
+                    ))
+                    .execute(conn)?;
+                pushboxv1::table
+                    .select(pushboxv1::idx)
+                    .order(pushboxv1::idx.desc())
+                    .first::<i64>(conn)
+            }).context(HandlerErrorKind::DBError)?;
         Ok(record_index as u64)
     }
 
@@ -107,7 +95,6 @@ impl DatabaseManager {
         index: &Option<u64>,
         limit: &Option<u64>,
     ) -> HandlerResult<Vec<Record>> {
-        // flatten into HashMap FromIterator<(K, V)>
         let mut query = pushboxv1::table
             .select((
                 pushboxv1::user_id,   // NOTE: load() does not order these, so you should
@@ -121,17 +108,11 @@ impl DatabaseManager {
             .filter(pushboxv1::user_id.eq(user_id))
             .filter(pushboxv1::device_id.eq(device_id))
             .filter(pushboxv1::ttl.ge(now_utc() as i64));
-        match index {
-            None => {}
-            Some(index) => {
-                query = query.filter(pushboxv1::idx.ge(*index as i64));
-            }
-        };
-        match limit {
-            None => {}
-            Some(limit) => {
-                query = query.limit(*limit as i64);
-            }
+        if let Some(index) = index {
+            query = query.filter(pushboxv1::idx.ge(*index as i64));
+        }
+        if let Some(limit) = limit {
+            query = query.limit(*limit as i64);
         }
         Ok(query
             .order(pushboxv1::idx)
@@ -141,13 +122,13 @@ impl DatabaseManager {
             .collect())
     }
 
-    pub fn delete(conn: &MysqlConnection, user_id: &str, device_id: &str) -> HandlerResult<bool> {
+    pub fn delete(conn: &MysqlConnection, user_id: &str, device_id: &str) -> HandlerResult<()> {
         let mut query = diesel::delete(pushboxv1::table).into_boxed();
         query = query.filter(pushboxv1::user_id.eq(user_id));
         if !device_id.is_empty() {
             query = query.filter(pushboxv1::device_id.eq(device_id));
         }
         query.execute(conn).context(HandlerErrorKind::DBError)?;
-        Ok(true)
+        Ok(())
     }
 }
