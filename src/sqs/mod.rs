@@ -53,9 +53,9 @@ impl SyncEventQueue {
                 name: "env_var".to_string(),
             })
             .unwrap_or_default();
-        let queue_url = config
-            .get_str("sqs_url")
-            .unwrap_or("https://sqs.us-east-1.amazonaws.com/927034868273/fxa-oauth-account-change-dev");
+        let queue_url = config.get_str("sqs_url").unwrap_or(
+            "https://sqs.us-east-1.amazonaws.com/927034868273/fxa-oauth-account-change-dev",
+        );
         // Max wait_time is 20, so we'll pound away on SQS.
         SyncEventQueue {
             sqs: Rc::new(SqsClient::simple(region)),

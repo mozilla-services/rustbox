@@ -247,10 +247,10 @@ fn read_opt(
     let is_last = match limit {
         None => true,
         Some(0) => true,
-        Some(_) => {
-            let last = messages.last().unwrap();
-            (last.idx as u64) == max_index
-        }
+        Some(_) => messages
+            .last()
+            .map(|last| (last.idx as u64) == max_index)
+            .unwrap_or(true),
     };
     Ok(Json(json!({
         "last": is_last,
@@ -369,7 +369,7 @@ fn status(config: ServerConfig) -> HandlerResult<Json> {
 #[cfg(test)]
 mod test {
     use rand::{distributions, thread_rng, Rng};
-    use std::{env, iter};
+    use std::env;
 
     use rocket;
     use rocket::config::{Config, Environment, RocketConfig, Table};
@@ -426,8 +426,8 @@ mod test {
     }
 
     fn device_id() -> String {
-        iter::repeat(())
-            .map(|()| thread_rng().sample(distributions::Alphanumeric))
+        thread_rng()
+            .sample_iter(&distributions::Alphanumeric)
             .take(8)
             .collect()
     }
@@ -457,6 +457,7 @@ mod test {
         let client = rocket_client(config);
         let user_id = user_id();
         let url = format!("/v1/store/{}/{}", user_id, device_id());
+        println!("URL: {}", url);
         let mut result = client
             .post(url.clone())
             .header(Header::new("Authorization", "bearer token"))
@@ -526,6 +527,22 @@ mod test {
         // a MySql race condition can cause these to fail.
         assert!(&read_json.index == &write_json.index);
         assert!(&read_json.messages[0].index == &write_json.index);
+
+        // no data, no panic
+        let empty_url = format!("/v1/store/{}/{}", user_id(), device_id());
+        read_result = client
+            .get(empty_url)
+            .header(Header::new("Authorization", "bearer token"))
+            .header(Header::new("Content-Type", "application/json"))
+            .dispatch();
+        read_json = serde_json::from_str(
+            &read_result
+                .body_string()
+                .expect("Empty body for read query"),
+        ).expect("Could not parse read query body");
+        assert!(read_json.status == 200);
+        assert!(read_json.messages.len() == 0);
+
         // cleanup
         client
             .delete(url.clone())

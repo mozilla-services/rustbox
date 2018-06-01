@@ -80,7 +80,7 @@ impl DatabaseManager {
                 pushboxv1::user_id.eq(user_id),
                 pushboxv1::device_id.eq(device_id),
                 pushboxv1::ttl.eq(ttl as i64),
-                pushboxv1::data.eq(String::from(data).as_bytes()),
+                pushboxv1::data.eq(data.as_bytes()),
             ))
             .execute(conn)
             .context(HandlerErrorKind::DBError)?;
