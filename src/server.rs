@@ -218,7 +218,7 @@ fn read_opt(
     // handler.
     slog_debug!(logger.log, "Handling Read"; "user_id" => &user_id, "device_id" => &device_id);
     check_token(&config, Method::Get, &device_id, &token)?;
-    let max_index = DatabaseManager::max_index(&conn, &user_id, &device_id);
+    let max_index = DatabaseManager::max_index(&conn, &user_id, &device_id)?;
     let mut index = options.index;
     let mut limit = options.limit;
     match options.status.unwrap_or("".into()).to_lowercase().as_str() {
