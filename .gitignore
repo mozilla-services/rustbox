@@ -3,3 +3,7 @@
 *.sw?
 tools/
 notes/
+.floo
+rls/
+target/
+

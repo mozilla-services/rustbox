@@ -58,7 +58,7 @@ impl FxAAuthenticator {
     ///  called '*fxa_response*` which contains the spoofed return data for
     /// Thus currently pulls a managed memory configuration object that contains
     /// an `.auth_app_name` String for `dryrun` and `test` configurations.
-    fn as_fxa_oauth(
+    fn from_fxa_oauth(
         token: String,
         config: &ServerConfig,
         logger: &RBLogger,
@@ -68,7 +68,7 @@ impl FxAAuthenticator {
         let fxa_url = Self::fxa_root(fxa_host);
         let mut body = HashMap::new();
         body.insert("token", token);
-        if &config.dryrun == &true {
+        if config.dryrun {
             slog_debug!(logger.log, "Dryrun, skipping auth");
             return Success(FxAAuthenticator {
                 auth_type: AuthType::FxAOauth,
@@ -82,7 +82,7 @@ impl FxAAuthenticator {
         {
             Ok(client) => client,
             Err(err) => {
-                slog_crit!(logger.log, "Reqwest failure"; "err" => format!("{:?}",err));
+                slog_crit!(logger.log, "Reqwest failure"; "err" => format!("{:?}", err));
                 return Failure((
                     VALIDATION_FAILED,
                     HandlerErrorKind::Unauthorized(format!("Client error {:?}", err)).into(),
@@ -132,7 +132,7 @@ impl FxAAuthenticator {
                     ))
                 }
             };
-            if raw_resp.status().is_success() == false {
+            if !raw_resp.status().is_success() {
                 // Log validation fail
                 return Failure((
                     VALIDATION_FAILED,
@@ -150,26 +150,27 @@ impl FxAAuthenticator {
                 }
             }
         };
-        return Success(FxAAuthenticator {
+        Success(FxAAuthenticator {
             auth_type: AuthType::FxAOauth,
             scope: resp.scope.clone(),
-        });
+        })
     }
 
     /// Minimal handshake security
-    fn as_server_token(
+    fn from_server_token(
         token: String,
         config: &ServerConfig,
     ) -> request::Outcome<Self, HandlerError> {
-        match config.server_token == Some(token) {
-            true => Success(FxAAuthenticator {
+        if config.server_token == Some(token) {
+            Success(FxAAuthenticator {
                 auth_type: AuthType::FxAServer,
                 scope: Vec::new(),
-            }),
-            false => Failure((
+            })
+        } else {
+            Failure((
                 VALIDATION_FAILED,
                 HandlerErrorKind::Unauthorized("Invalid Authorization token".to_string()).into(),
-            )),
+            ))
         }
     }
 }
@@ -191,9 +192,10 @@ impl<'a, 'r> FromRequest<'a, 'r> for FxAAuthenticator {
                 .guard::<State<ServerConfig>>()
                 .expect("Application missing config")
                 .inner();
-            let auth_bits: Vec<&str> = auth_header.splitn(2, " ").collect();
-            slog_info!(logger.log, "Checking auth token");
+            let auth_bits: Vec<&str> = auth_header.splitn(2, ' ').collect();
+            slog_debug!(logger.log, "Checking auth token");
             if auth_bits.len() != 2 {
+                slog_debug!(logger.log, "Server token missing elements"; "token" => &auth_header);
                 return Failure((
                     VALIDATION_FAILED,
                     HandlerErrorKind::InvalidAuth(
@@ -203,12 +205,12 @@ impl<'a, 'r> FromRequest<'a, 'r> for FxAAuthenticator {
             };
             match auth_bits[0].to_lowercase().as_str() {
                 "bearer" | "fxa-oauth-token" => {
-                    slog_info!(logger.log, "Found Oauth token");
-                    return Self::as_fxa_oauth(auth_bits[1].into(), config, logger);
+                    slog_debug!(logger.log, "Found Oauth token");
+                    return Self::from_fxa_oauth(auth_bits[1].into(), config, logger);
                 }
-                "fxa-server-key" => return Self::as_server_token(auth_bits[1].into(), config),
+                "fxa-server-key" => return Self::from_server_token(auth_bits[1].into(), config),
                 _ => {
-                    slog_info!(logger.log, "Found Server token");
+                    slog_debug!(logger.log, "Found Server token");
                     return Failure((
                         VALIDATION_FAILED,
                         HandlerErrorKind::InvalidAuth(

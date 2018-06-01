@@ -3,6 +3,9 @@ sudo: false
 cache: cargo
 
 rust:
+  #- nightly
+  # Override because diesel is broken under current nightly
+  # Make sure this matches in Dockerfile
   - nightly
 env:
   global:

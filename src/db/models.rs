@@ -49,7 +49,7 @@ pub fn calc_ttl(seconds: u64) -> u64 {
 pub struct DatabaseManager {}
 
 impl DatabaseManager {
-    pub fn max_index(conn: &MysqlConnection, user_id: &String, device_id: &String) -> u64 {
+    pub fn max_index(conn: &MysqlConnection, user_id: &str, device_id: &str) -> u64 {
         let mut max_index_sel: Vec<i64> = match pushboxv1::table
             .select(pushboxv1::idx)
             .filter(pushboxv1::user_id.eq(user_id))
@@ -66,9 +66,9 @@ impl DatabaseManager {
 
     pub fn new_record(
         conn: &MysqlConnection,
-        user_id: &String,
-        device_id: &String,
-        data: &String,
+        user_id: &str,
+        device_id: &str,
+        data: &str,
         ttl: u64,
     ) -> HandlerResult<u64> {
         let t_manager = conn.transaction_manager();
@@ -80,7 +80,7 @@ impl DatabaseManager {
                 pushboxv1::user_id.eq(user_id),
                 pushboxv1::device_id.eq(device_id),
                 pushboxv1::ttl.eq(ttl as i64),
-                pushboxv1::data.eq(data.clone().into_bytes()),
+                pushboxv1::data.eq(String::from(data).as_bytes()),
             ))
             .execute(conn)
             .context(HandlerErrorKind::DBError)?;
@@ -102,8 +102,8 @@ impl DatabaseManager {
 
     pub fn read_records(
         conn: &MysqlConnection,
-        user_id: &String,
-        device_id: &String,
+        user_id: &str,
+        device_id: &str,
         index: &Option<u64>,
         limit: &Option<u64>,
     ) -> HandlerResult<Vec<Record>> {
@@ -124,13 +124,13 @@ impl DatabaseManager {
         match index {
             None => {}
             Some(index) => {
-                query = query.filter(pushboxv1::idx.ge(index.clone() as i64));
+                query = query.filter(pushboxv1::idx.ge(*index as i64));
             }
         };
         match limit {
             None => {}
             Some(limit) => {
-                query = query.limit(limit.clone() as i64);
+                query = query.limit(*limit as i64);
             }
         }
         Ok(query
@@ -141,25 +141,13 @@ impl DatabaseManager {
             .collect())
     }
 
-    pub fn delete(
-        conn: &MysqlConnection,
-        user_id: &String,
-        device_id: &String,
-    ) -> HandlerResult<bool> {
-        // boxed deletes are "coming soon"
-        // see https://github.com/diesel-rs/diesel/pull/1534
-        if device_id.len() > 0 {
-            diesel::delete(
-                pushboxv1::table
-                    .filter(pushboxv1::user_id.eq(user_id))
-                    .filter(pushboxv1::device_id.eq(device_id)),
-            ).execute(conn)
-                .context(HandlerErrorKind::DBError)?;
-        } else {
-            diesel::delete(pushboxv1::table.filter(pushboxv1::user_id.eq(user_id)))
-                .execute(conn)
-                .context(HandlerErrorKind::DBError)?;
+    pub fn delete(conn: &MysqlConnection, user_id: &str, device_id: &str) -> HandlerResult<bool> {
+        let mut query = diesel::delete(pushboxv1::table).into_boxed();
+        query = query.filter(pushboxv1::user_id.eq(user_id));
+        if !device_id.is_empty() {
+            query = query.filter(pushboxv1::device_id.eq(device_id));
         }
+        query.execute(conn).context(HandlerErrorKind::DBError)?;
         Ok(true)
     }
 }

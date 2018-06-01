@@ -1,5 +1,6 @@
 use std::cmp;
 use std::str::Utf8Error;
+use std::{thread, time};
 
 use rocket;
 use rocket::config;
@@ -11,10 +12,11 @@ use rocket_contrib::json::Json;
 use auth::{AuthType, FxAAuthenticator};
 use config::ServerConfig;
 use db::models::DatabaseManager;
-use db::{self, Conn};
+use db::{self, Conn, MysqlPool};
 use error::{HandlerError, HandlerErrorKind, HandlerResult};
 use failure::Error;
 use logging::RBLogger;
+use sqs::{self, SyncEvent};
 
 #[derive(Deserialize, Debug)]
 pub struct DataRecord {
@@ -31,7 +33,9 @@ pub struct Options {
 
 // Convenience function to convert a Option result into a u64 value (or 0)
 fn as_u64(opt: Result<String, Utf8Error>) -> u64 {
-    opt.unwrap_or("0".to_string()).parse::<u64>().unwrap_or(0)
+    opt.unwrap_or_else(|_| "0".to_owned())
+        .parse::<u64>()
+        .unwrap_or(0)
 }
 
 /// Valid GET options include:
@@ -73,8 +77,38 @@ impl<'f> FromForm<'f> for Options {
 pub struct Server {}
 
 impl Server {
+    fn process_message(pool: &MysqlPool, event: &SyncEvent) -> Result<(), Error> {
+        let conn = &pool.get()?;
+        db::models::DatabaseManager::delete(&conn, &event.uid, &event.id)?;
+        Ok(())
+    }
+
     pub fn start(rocket: rocket::Rocket) -> Result<rocket::Rocket, Error> {
         db::run_embedded_migrations(rocket.config())?;
+
+        let db_pool = db::pool_from_config(rocket.config()).expect("Could not get pool");
+        let sqs_config = rocket.config().clone();
+        let sq_logger = RBLogger::new(rocket.config());
+        if !cfg!(test) {
+            // if we're not running a test, spawn the SQS handler for account/device deletes
+            thread::spawn(move || {
+                let sqs_handler = sqs::SyncEventQueue::from_config(&sqs_config, &sq_logger);
+                loop {
+                    if let Some(event) = sqs_handler.fetch() {
+                        if let Err(e) = Server::process_message(&db_pool, &event) {
+                            slog_error!(sq_logger.log, "Could not process message"; "error" => e.to_string());
+                        };
+                        if let Err(e) = sqs_handler.ack_message(&event) {
+                            slog_error!(sq_logger.log, "Could not ack message"; "error" => e.to_string());
+                        };
+                    } else {
+                        // sleep 5m
+                        thread::sleep(time::Duration::from_secs(300));
+                    }
+                }
+            });
+        }
+
         Ok(rocket
             .attach(AdHoc::on_attach(|rocket| {
                 // Copy the config into a state manager.
@@ -117,7 +151,7 @@ pub fn check_server_token(
 ) -> Result<bool, HandlerError> {
     // currently a stub for the FxA server token auth.
     // In theory, the auth mod already checks the token against config.
-    return Ok(true);
+    Ok(true)
 }
 
 /// Check the permissions of the FxA token to see if read/write access is provided.
@@ -162,7 +196,7 @@ pub fn check_fxa_token(
         }
         _ => {}
     }
-    return Err(HandlerErrorKind::Unauthorized("Access Token Unauthorized".to_string()).into());
+    Err(HandlerErrorKind::Unauthorized("Access Token Unauthorized".to_string()).into())
 }
 
 // Method handlers:::
@@ -182,7 +216,7 @@ fn read_opt(
     // Validate::from_request extracts the token from the Authorization header, validates it
     // against FxA and the method, and either returns OK or an error. We need to reraise it to the
     // handler.
-    slog_info!(logger.log, "Handling Read");
+    slog_debug!(logger.log, "Handling Read"; "user_id" => &user_id, "device_id" => &device_id);
     check_token(&config, Method::Get, &device_id, &token)?;
     let max_index = DatabaseManager::max_index(&conn, &user_id, &device_id);
     let mut index = options.index;
@@ -192,13 +226,13 @@ fn read_opt(
             // New entry, needs all data
             index = None;
             limit = None;
-            slog_debug!(logger.log, "Welcome new user");
+            slog_debug!(logger.log, "Welcome new user"; "user_id" => &user_id);
         }
         "lost" => {
             // Just lost, needs just the next index.
             index = None;
             limit = Some(0);
-            slog_debug!(logger.log, "Sorry, you're lost.");
+            slog_debug!(logger.log, "Sorry, you're lost"; "user_id" => &user_id);
         }
         _ => {}
     };
@@ -208,7 +242,7 @@ fn read_opt(
     for message in &messages {
         msg_max = cmp::max(msg_max, message.idx as u64);
     }
-    slog_info!(logger.log, "Found messages"; "len" => messages.len());
+    slog_debug!(logger.log, "Found messages"; "len" => messages.len(), "user_id" => &user_id);
     // returns json {"status":200, "index": max_index, "messages":[{"index": #, "data": String}, ...]}
     let is_last = match limit {
         None => true,
@@ -276,7 +310,7 @@ fn write(
             "index": -1,
         })));
     }
-    slog_debug!(logger.log, "Writing new record");
+    slog_debug!(logger.log, "Writing new record:"; "user_id" => &user_id, "device_id" => &device_id);
     let response = DatabaseManager::new_record(
         &conn,
         &user_id,
@@ -334,8 +368,8 @@ fn status(config: ServerConfig) -> HandlerResult<Json> {
 
 #[cfg(test)]
 mod test {
-    use rand::{thread_rng, Rng};
-    use std::env;
+    use rand::{distributions, thread_rng, Rng};
+    use std::{env, iter};
 
     use rocket;
     use rocket::config::{Config, Environment, RocketConfig, Table};
@@ -392,7 +426,10 @@ mod test {
     }
 
     fn device_id() -> String {
-        thread_rng().gen_ascii_chars().take(8).collect()
+        iter::repeat(())
+            .map(|()| thread_rng().sample(distributions::Alphanumeric))
+            .take(8)
+            .collect()
     }
 
     fn user_id() -> String {
@@ -450,22 +487,22 @@ mod test {
             .header(Header::new("Content-Type", "application/json"))
             .body(r#"{"ttl": 60, "data":"Some Data"}"#)
             .dispatch();
-        let write_json: WriteResp =
-            serde_json::from_str(&write_result
+        let write_json: WriteResp = serde_json::from_str(
+            &write_result
                 .body_string()
-                .expect("Empty body string for write"))
-                .expect("Could not parse write response body");
+                .expect("Empty body string for write"),
+        ).expect("Could not parse write response body");
         let mut read_result = client
             .get(url.clone())
             .header(Header::new("Authorization", "bearer token"))
             .header(Header::new("Content-Type", "application/json"))
             .dispatch();
         assert!(read_result.status() == rocket::http::Status::raw(200));
-        let mut read_json: ReadResp =
-            serde_json::from_str(&read_result
+        let mut read_json: ReadResp = serde_json::from_str(
+            &read_result
                 .body_string()
-                .expect("Empty body for read response"))
-                .expect("Could not parse read response");
+                .expect("Empty body for read response"),
+        ).expect("Could not parse read response");
 
         assert!(read_json.status == 200);
         assert!(read_json.messages.len() > 0);
@@ -479,11 +516,11 @@ mod test {
             .header(Header::new("Content-Type", "application/json"))
             .dispatch();
 
-        read_json =
-            serde_json::from_str(&read_result
+        read_json = serde_json::from_str(
+            &read_result
                 .body_string()
-                .expect("Empty body for read query"))
-                .expect("Could not parse read query body");
+                .expect("Empty body for read query"),
+        ).expect("Could not parse read query body");
         assert!(read_json.status == 200);
         assert!(read_json.messages.len() == 1);
         // a MySql race condition can cause these to fail.
@@ -542,12 +579,11 @@ mod test {
             .header(Header::new("Content-Type", "application/json"))
             .dispatch();
         assert!(read_result.status() == rocket::http::Status::raw(200));
-        read_json = serde_json::from_str(&read_result
-            .body_string()
-            .expect("Empty verification body string"))
-            .expect(
-            "Could not parse verification body string",
-        );
+        read_json = serde_json::from_str(
+            &read_result
+                .body_string()
+                .expect("Empty verification body string"),
+        ).expect("Could not parse verification body string");
         assert!(read_json.messages.len() == 0);
     }
 
